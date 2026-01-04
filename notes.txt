@@ -312,3 +312,130 @@ function MyComp() {
 
 ==============================================================================
 
+Solid: ref callback (summary)
+
+A ref callback is a function you pass to `ref` so Solid can give you the real
+DOM element when it is created.
+
+Basic example (store single element ref):
+let el;
+return <input ref={(node) => (el = node)} />;
+
+- Solid calls the callback with the DOM node when the element is created.
+- After that, you can use `el` (focus, measure, scroll, etc.).
+
+Example (log timing):
+let el;
+return (
+  <div
+    ref={(node) => {
+      el = node;
+      console.log("ref assigned, isConnected =", node.isConnected);
+    }}
+  />
+);
+
+Example (refs in a list using a Map):
+const els = new Map();
+
+<For each={items()}>
+  {(item) => (
+    <li ref={(node) => els.set(item.id, node)}>
+      {item.name}
+    </li>
+  )}
+</For>
+
+// later:
+els.get(someId)?.scrollIntoView();
+
+Cleanup pattern (remove ref when item unmounts):
+import { onCleanup } from "solid-js";
+
+const els = new Map();
+
+<For each={items()}>
+  {(item) => (
+    <li
+      ref={(node) => {
+        els.set(item.id, node);
+        onCleanup(() => els.delete(item.id));
+      }}
+    >
+      {item.name}
+    </li>
+  )}
+</For>
+
+
+=================================================================
+
+Where cleanup can occur in Solid (with examples)
+
+Key rule:
+- onCleanup is tied to the reactive scope where you call it.
+- Cleanup runs when that scope is:
+  (1) re-run (effects/computations), or
+  (2) disposed (component/branch/list/root removed).
+
+1) Component cleanup (runs on unmount/disposal)
+- Trigger: component removed from DOM (route change, <Show> off, parent stops rendering)
+import { onCleanup } from "solid-js";
+
+function Comp() {
+  onCleanup(() => console.log("component disposed"));
+  return <div />;
+}
+
+2) Effect cleanup (createEffect)
+- Trigger: before effect re-runs (dependency changes) AND when disposed
+import { createEffect, onCleanup } from "solid-js";
+
+createEffect(() => {
+  const id = userId();              // dependency
+  const sub = subscribeToUser(id);  // setup
+  onCleanup(() => sub.unsubscribe()); // cleanup old before rerun / on dispose
+});
+
+3) Conditional branch cleanup (<Show>, <Switch>/<Match>)
+- Trigger: branch removed (condition changes)
+import { Show, onCleanup } from "solid-js";
+
+function Child() {
+  onCleanup(() => console.log("child branch disposed"));
+  return <div>Child</div>;
+}
+
+<Show when={open()}>
+  <Child />
+</Show>
+
+4) List item cleanup (<For>, <Index>)
+- Trigger: item removed (delete) or recreated due to list changes
+import { For, onCleanup } from "solid-js";
+
+function Row() {
+  onCleanup(() => console.log("row disposed"));
+  return <li>Row</li>;
+}
+
+<For each={items()}>
+  {(item) => <Row item={item} />}
+</For>
+
+5) Manual root cleanup (createRoot)
+- Trigger: calling dispose() cleans everything under the root
+import { createRoot, onCleanup } from "solid-js";
+
+const dispose = createRoot(() => {
+  onCleanup(() => console.log("root disposed"));
+});
+
+// later
+dispose();
+
+Notes:
+- Effects: cleanup happens on dependency changes (reruns) + final dispose.
+- Components/branches/lists: cleanup happens when removed from render tree.
+
+===============================================================================
