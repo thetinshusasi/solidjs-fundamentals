@@ -1,0 +1,314 @@
+- Single flight mutations
+- Internal structure of solidstart
+
+
+SOLID: createEffect vs createMemo (with gotchas)
+
+Mental model
+- Solid tracks dependencies by “READS”.
+- A reactive computation (effect/memo/JSX expression) runs once initially, then re-runs when any signals it READ changed.
+
+createMemo(fn)
+- Purpose: derive + cache a value.
+- Think: “computed signal”.
+- Runs fn once initially, caches the result.
+- Recomputes ONLY when signals read inside fn change.
+- Returns a READ-ONLY accessor: memo() -> value.
+- Key benefit: if memo() is read in many places, Solid computes it ONCE per change, then shares the result.
+- Use for: filtered lists, computed totals, formatted strings, expensive calculations, expensive DOM creation results.
+
+Gotchas (createMemo)
+- Don’t try to “set” a memo; it’s read-only.
+- Memo should be pure (no side effects inside). Keep network calls / localStorage / DOM mutations out of memos.
+- Memo only tracks signals you read inside it. If you forget to read a signal, it won’t update.
+
+Rule: “What can be derived, should be derived.”
+- If value = function(other state), prefer createMemo over “effect writes into another signal”.
+
+createEffect(fn)
+- Purpose: run SIDE EFFECTS when dependencies change.
+- Examples: API calls, logging/analytics, localStorage, timers, subscriptions, websocket, imperative DOM work (focus/measure), integrating non-Solid libs.
+- Runs once initially, then re-runs when any signals read inside fn change.
+- Common pattern: read some signal(s) -> perform side effect -> set another signal with result.
+
+Gotchas (createEffect)
+- Effects re-run based on what they READ, not what they WRITE.
+  - Writing setUser(...) does NOT retrigger an effect unless that effect also reads user().
+- Infinite loops happen when an effect reads a signal that it (directly or indirectly) writes.
+  - Direct loop: read user() then setUser(...)
+  - Indirect loop: effect A sets userId from user; effect B fetches user from userId -> can cycle.
+- Async fetching gotcha: rapid changes can trigger multiple requests; you may need cancellation, debouncing, or “ignore stale responses”.
+- Avoid using createEffect to maintain derived state:
+  - Anti-pattern: createEffect(() => setTotal(calc(items())))
+  - Prefer: const total = createMemo(() => calc(items()))
+
+How JSX updates relate
+- Each JSX expression {...} behaves like a tiny reactive computation.
+- If it returns text: Solid updates the text node only.
+- If it changes attributes: Solid updates only those attributes.
+- If it conditionally returns different elements: Solid swaps only the affected child nodes, not the entire component.
+
+Tips to prevent accidental reactivity / loops
+- Dependency tracking is by reads; be intentional about what you read inside effects.
+- If you must read something in an effect but don’t want it to trigger reruns, use untrack(() => ...)
+- Keep “source of truth” signals separate from “derived” values (use memos for derived).
+- Prefer createResource for data fetching patterns when possible (cleaner than manual effect + setSignal).
+
+Quick decision guide
+- “I need a value computed from other signals” -> createMemo
+- “I need to do something external when signals change” -> createEffect
+- “I’m fetching data based on a signal” -> createResource (often) or createEffect with async safeguards
+
+
+SOLID Best Practices: Signals, Effects, Memos (Do’s / Don’ts)
+
+Core mental model
+- Solid tracks dependencies by READS.
+- Any reactive computation runs once initially, then re-runs when signals it READ changes.
+- Keep “real state” minimal. Derive everything else.
+
+1) Signals (createSignal)
+What they are
+- Source-of-truth state holders: user input, server results, external events.
+
+DO
+- Store only real state (things you can’t derive).
+  Examples: selectedId, queryText, itemsFromServer, userProfile, authToken.
+- Keep signals small and focused (avoid giant “appState” objects unless needed).
+- Prefer immutable updates for arrays/objects (create new arrays/objects).
+  - setItems(prev => [...prev, newItem])
+  - setUser(prev => ({ ...prev, name: "X" }))
+- Name accessors clearly:
+  - const [user, setUser] = createSignal(null)
+
+DON’T
+- Don’t store derived values as signals (total, filtered list, fullName, isValid).
+  Use createMemo instead.
+- Don’t set signals in ways that depend on reading & writing the same signal without guards.
+- Don’t mutate objects/arrays in place and expect reactivity without setting a new reference.
+
+2) Memos (createMemo)
+What they are
+- Cached computed values (read-only signals).
+- “Compute once per change, share everywhere.”
+
+DO
+- Use memos for derived values:
+  - filtered/sorted lists, counts, totals, formatting, mapping view models.
+- Keep memo functions PURE:
+  - only READ signals/memos and RETURN a value.
+- Use memos to avoid duplicated expensive work:
+  - compute once even if used in multiple places (JSX + other logic).
+
+DON’T
+- Don’t do side effects in memos:
+  - no fetch, no localStorage writes, no subscriptions, no DOM manipulation.
+- Don’t call setters in memos (directly or via helper functions).
+  - This can create circular updates and unpredictable behavior.
+- Don’t “force” memos to run; they should be derived naturally from reads.
+
+Rule
+- If it can be computed from existing state: createMemo.
+- “What can be derived, should be derived.”
+
+3) Effects (createEffect)
+What they are
+- Reactive side-effect runners.
+- Runs once initially; re-runs when dependencies (signals read inside) change.
+
+DO
+- Use effects for SIDE EFFECTS:
+  - API calls / createResource alternative
+  - logging / analytics
+  - localStorage reads/writes
+  - timers, subscriptions, websockets
+  - imperative DOM work (focus, measure)
+- Read only what should trigger the effect (be intentional).
+- Add guards to avoid unnecessary work:
+  - if (!id) return;
+  - if (prev === next) return;
+- For async work, handle “stale responses”:
+  - track request id / abort controller / ignore out-of-date results.
+
+DON’T
+- Don’t use effects to create derived state:
+  - Anti-pattern: createEffect(() => setTotal(calc(items())))
+  - Prefer: const total = createMemo(() => calc(items()))
+- Don’t accidentally read signals you write (common loop source).
+  - Effects re-run based on READS, not WRITES.
+  - But if you read X() and setX(...), that’s a loop risk.
+- Don’t put too many dependencies in one effect; split effects by responsibility.
+
+4) Loop / gotcha checklist (most common bugs)
+- Infinite loop usually means:
+  - An effect or memo READS a signal that it (directly/indirectly) WRITES.
+- Direct loop example (bad):
+  - createEffect(() => setX(x() + 1))
+- Indirect loop example (bad):
+  - effect A: reads user() -> sets userId()
+  - effect B: reads userId() -> fetch -> sets user()
+- Fix patterns:
+  - move “derived” to memo
+  - add guard conditions
+  - separate responsibilities into separate effects
+  - use untrack(() => ...) when you must read something but don’t want it as a dependency
+
+5) Practical decision guide
+- “This value comes from user/server/outside world” -> Signal
+- “This value can be computed from other state” -> Memo
+- “I need to do something external when something changes” -> Effect
+- “Fetch data when dependency changes” -> createResource (often best) or Effect with cancellation
+
+6) Naming + organization tips
+- Signals: noun (user, items, query)
+- Setters: verb (setUser, setItems, setQuery)
+- Memos: derived noun (filteredItems, totalPrice, fullName)
+- Effects: group by side-effect type (storage effect, analytics effect, fetch effect)
+
+Quick example (clean structure)
+- signal: userId
+- effect: fetch user when userId changes
+- memo: derive fullName from user
+
+const [userId, setUserId] = createSignal();
+const [user, setUser] = createSignal(null);
+
+createEffect(() => {
+  const id = userId();
+  if (!id) return;
+  fetch(`/api/users/${id}`).then(r => r.json()).then(setUser);
+});
+
+const fullName = createMemo(() => user() ? `${user().first} ${user().last}` : "");
+In Solid, a component function usually runs only once (initial setup), so console.log at the top level
+logs only once. Solid updates the UI via fine-grained reactivity without re-running the whole component. 
+If you want a log to run on updates, put it inside a reactive context (e.g., createEffect 
+or a JSX {...} expression) and make sure you READ signals inside it (count(), not count).
+
+JSX lets you use JavaScript (if/map/etc.) inside templates. But Solid has no
+Virtual DOM, so using items().map(...) for a reactive list can recreate DOM
+nodes on updates, which is wasteful. Reactive libraries use “template helpers”
+to update lists/conditionals efficiently without rebuilding everything. In
+Solid, these helpers are provided as components like <For> (lists) and <Show>
+(conditionals). They create nodes once and then add/remove/update only what
+changed.
+
+Example: list rendering
+
+Less ideal (may recreate <li> nodes on updates):
+<ul>
+  {items().map(item => <li>{item.name}</li>)}
+</ul>
+
+Preferred in Solid (efficient updates):
+<ul>
+  <For each={items()}>
+    {(item) => <li>{item.name}</li>}
+  </For>
+</ul>
+
+Example: conditional rendering
+
+Simple JS conditional:
+{isLoggedIn() ? <Dashboard /> : <Login />}
+
+Preferred in Solid (clear + efficient helper):
+<Show when={isLoggedIn()} fallback={<Login />}>
+  <Dashboard />
+</Show>
+
+Solid: <Switch> vs <Dynamic>
+
+<Switch> = if / else-if / else for UI
+- Use when you want to show ONE of many UI states based on conditions.
+- Solid renders the FIRST <Match> whose `when` is true; otherwise renders `fallback`.
+
+Example:
+import { Switch, Match } from "solid-js";
+
+<Switch fallback={<div>Idle</div>}>
+  <Match when={loading()}><div>Loading...</div></Match>
+  <Match when={error()}><div>Error!</div></Match>
+  <Match when={data()}><div>Show data</div></Match>
+</Switch>
+
+<Dynamic> = choose the component/tag itself at runtime
+- Use when the TYPE of element/component changes (button vs link, h1 vs h2, etc.).
+
+Example:
+import { Dynamic } from "solid-js/web";
+
+<Dynamic component={isLink() ? "a" : "button"} href="/home">
+  Go
+</Dynamic>
+
+Rule of thumb:
+- Choosing between conditions (states) -> <Switch>
+- Choosing which component/tag to render -> <Dynamic>
+============================================================================================
+
+Solid: onCleanup (summary)
+
+onCleanup lets you register cleanup code anywhere in Solid’s reactive system.
+It runs in two cases:
+1) Before a reactive scope re-runs (e.g., an effect re-executes because a
+   dependency changed).
+2) When that scope is disposed (e.g., component unmount, <Show> branch removed,
+   list item removed in <For>/<Index>).
+
+Use onCleanup to stop/undo things you started:
+- remove event listeners
+- clear timers/intervals
+- unsubscribe from websockets/subscriptions
+- abort in-flight fetch requests
+- dispose 3rd-party library instances
+
+Example A: createEffect + onCleanup (timer)
+import { createSignal, createEffect, onCleanup } from "solid-js";
+
+const [count, setCount] = createSignal(0);
+
+createEffect(() => {
+  console.log("effect run, count =", count()); // dependency
+
+  const t = setInterval(() => setCount(c => c + 1), 1000);
+
+  onCleanup(() => {
+    console.log("cleanup before re-run or dispose");
+    clearInterval(t);
+  });
+});
+
+Example B: createEffect + onCleanup (abort fetch on changes)
+import { createEffect, onCleanup } from "solid-js";
+
+createEffect(() => {
+  const id = userId(); // dependency
+
+  const controller = new AbortController();
+  fetch(`/api/users/${id}`, { signal: controller.signal });
+
+  onCleanup(() => {
+    // runs before effect re-runs OR when effect is disposed
+    controller.abort();
+  });
+});
+
+Example C: Component + onCleanup (event listener)
+import { onMount, onCleanup } from "solid-js";
+
+function MyComp() {
+  const onResize = () => console.log("resized");
+
+  onMount(() => window.addEventListener("resize", onResize));
+
+  onCleanup(() => {
+    // runs when component is removed from the DOM
+    window.removeEventListener("resize", onResize);
+  });
+
+  return <div>Resize the window</div>;
+}
+
+==============================================================================
+
