@@ -504,3 +504,86 @@ function clickOutside(el, accessor) {
 
 =====================================================================================
 
+Solid: mergeProps + splitProps (purpose + gotchas) with examples
+
+Why these exist (reactivity gotcha):
+- Solid props are reactive. If you destructure/spread like plain JS objects,
+  you can "snapshot" values and lose updates.
+
+BAD (breaks reactivity: snapshot):
+function Comp(props) {
+  const { name } = props;     // snapshot
+  return <div>{name}</div>;   // won’t update if props.name changes
+}
+
+GOOD (keep reactivity):
+function Comp(props) {
+  return <div>{props.name}</div>;
+}
+
+1) mergeProps
+Purpose:
+- Add default props / combine prop sources WITHOUT losing reactivity.
+- Safer than { ...defaults, ...props } which snapshots values.
+
+Example (defaults + reactive):
+import { mergeProps } from "solid-js";
+
+function Button(rawProps) {
+  const props = mergeProps({ type: "button", disabled: false }, rawProps);
+  return (
+    <button type={props.type} disabled={props.disabled}>
+      {props.children}
+    </button>
+  );
+}
+
+Gotchas:
+- Order matters: later sources override earlier.
+  - mergeProps(defaults, props) ✅ parent overrides defaults
+  - mergeProps(props, defaults) ❌ defaults override parent
+- Don’t destructure merged props into variables (snapshot):
+  const { disabled } = props; ❌ (use props.disabled)
+
+2) splitProps
+Purpose:
+- Split props into groups (local component props vs “rest” DOM props) while
+  keeping them reactive. Great for prop forwarding.
+
+Example (local vs rest):
+import { splitProps } from "solid-js";
+
+function Input(allProps) {
+  const [local, rest] = splitProps(allProps, ["label", "error"]);
+  return (
+    <label>
+      <span>{local.label}</span>
+      <input {...rest} />
+      {local.error && <div class="error">{local.error}</div>}
+    </label>
+  );
+}
+
+Gotchas:
+- Don’t destructure local/rest into plain variables (snapshot):
+  const { label } = local; ❌ (use local.label)
+
+Common best-practice pattern (defaults + local/rest):
+import { mergeProps, splitProps } from "solid-js";
+
+function Button(rawProps) {
+  const merged = mergeProps({ variant: "primary", type: "button" }, rawProps);
+  const [local, rest] = splitProps(merged, ["variant"]);
+  return (
+    <button class={`btn ${local.variant}`} {...rest}>
+      {rest.children}
+    </button>
+  );
+}
+
+Rule of thumb:
+- Defaults/combining props -> mergeProps
+- Splitting local props from forwarded DOM props -> splitProps
+- Avoid destructuring props into variables; prefer props.x or local.x
+===========================================================================
+
