@@ -439,3 +439,68 @@ Notes:
 - Components/branches/lists: cleanup happens when removed from render tree.
 
 ===============================================================================
+
+
+Directive accessor updates vs event listener re-registration (Solid)
+
+Key point:
+- A directive function (clickOutside(el, accessor)) runs ONCE when the element is
+  created.
+- document.addEventListener(...) is executed ONCE at that time.
+- When the value passed to the directive changes, Solid does NOT re-run the
+  directive and does NOT automatically remove/re-add the listener.
+
+Why the handler still uses the latest value:
+- `accessor` is a function (getter). The event handler calls accessor() at click
+  time, so it always reads the latest value/callback.
+
+Example (no re-register needed):
+function clickOutside(el, accessor) {
+  const onDocClick = (e) => {
+    const cb = accessor();              // reads latest callback/value
+    if (cb && !el.contains(e.target)) cb(e);
+  };
+
+  document.addEventListener("click", onDocClick);
+
+  onCleanup(() => {
+    document.removeEventListener("click", onDocClick);
+  });
+}
+
+- If accessor() changes (new callback), the SAME onDocClick is still registered,
+  but it calls the NEW callback because accessor() returns the latest one.
+- onCleanup runs ONLY when the element is disposed (unmounted/removed), not when
+  accessor changes.
+
+When you DO need to re-register the listener:
+- if wiring depends on reactive values (enabled/disabled, event type, target,
+  capture/passive options), use createEffect to add/remove.
+
+Example (re-register on changes):
+import { createEffect, onCleanup } from "solid-js";
+
+function clickOutside(el, accessor) {
+  createEffect(() => {
+    const opts = accessor();            // reactive options
+    if (!opts?.enabled) return;
+
+    const handler = (e) => {
+      const cb = accessor()?.onOutside; // latest callback
+      if (cb && !el.contains(e.target)) cb(e);
+    };
+
+    document.addEventListener(opts.event ?? "click", handler, opts.capture);
+
+    onCleanup(() => {
+      document.removeEventListener(opts.event ?? "click", handler, opts.capture);
+    });
+  });
+}
+
+- Here, changing enabled/event/capture causes the effect to re-run:
+  cleanup removes old handler, then a new handler is added.
+
+
+=====================================================================================
+
