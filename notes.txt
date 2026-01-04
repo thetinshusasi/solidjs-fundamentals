@@ -587,3 +587,67 @@ Rule of thumb:
 - Avoid destructuring props into variables; prefer props.x or local.x
 ===========================================================================
 
+Solid: children() helper (purpose + gotchas) with examples
+
+Purpose:
+- props.children can be many shapes (string, node, array, nested arrays/fragments,
+  or even a function). The `children()` helper resolves/normalizes children and
+  keeps reactivity.
+- Use it when you need to inspect/transform children (count, map, fallback,
+  wrap, filter).
+
+Basic usage:
+import { children } from "solid-js";
+
+const c = children(() => props.children); // c is an accessor
+// use c() to get resolved children
+
+Example 1: simple render (children() not required)
+function Card(props) {
+  return <div class="card">{props.children}</div>;
+}
+
+Example 2: fallback if no children
+import { children } from "solid-js";
+
+function Panel(props) {
+  const c = children(() => props.children);
+  return <div>{c() ? c() : <div>No content</div>}</div>;
+}
+
+Example 3: map/wrap children (convert to array)
+import { children } from "solid-js";
+
+function Stack(props) {
+  const c = children(() => props.children);
+  const arr = () => c.toArray(); // normalized array of child nodes
+
+  return (
+    <div class="stack">
+      {arr().map((node) => <div class="item">{node}</div>)}
+    </div>
+  );
+}
+
+Gotchas:
+1) props.children might be a function (lazy/reactive children)
+- children() resolves it correctly.
+  <MyComp>{() => <Expensive />}</MyComp>
+
+2) Keep reactivity: don’t destructure children from props (snapshot)
+BAD:
+  const { children } = props; // snapshot-ish
+GOOD:
+  const c = children(() => props.children);
+
+3) c is an accessor: use c() inside render/effects (don’t precompute once if you
+   need updates).
+GOOD:
+  return <div>{c()}</div>
+
+Rule of thumb:
+- Just render children -> {props.children} is fine
+- Inspect/transform/count/fallback/map children -> use children(() => props.children)
+
+=========================================================================================
+
