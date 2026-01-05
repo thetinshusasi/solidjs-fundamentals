@@ -651,3 +651,148 @@ Rule of thumb:
 
 =========================================================================================
 
+Solid: createStore (purpose + use cases) with examples
+
+Purpose:
+- createStore is for structured state (objects/arrays/nested data).
+- It gives a reactive proxy to read like normal JS (state.user.name) and a setter
+  that can update deep paths (setState("user","name","X")).
+- Fine-grained updates: only the parts you read update when they change.
+- Avoids heavy object/array spreading for deep updates.
+
+When to use createStore vs createSignal:
+- createStore: lots of fields, nested objects/arrays, frequent deep updates.
+- createSignal: simple primitives or you replace the whole value often.
+
+1) Object store (forms/settings)
+import { createStore } from "solid-js/store";
+
+const [form, setForm] = createStore({
+  name: "",
+  email: "",
+  address: { city: "", zip: "" }
+});
+
+setForm("name", "Tinshu");
+setForm("address", "city", "Fredericton");
+
+2) Array of objects store (todos/rows)
+import { createStore } from "solid-js/store";
+
+const [todos, setTodos] = createStore([
+  { id: 1, text: "Buy milk", done: false },
+  { id: 2, text: "Learn Solid", done: true }
+]);
+
+// update by index
+setTodos(0, "done", true);
+
+// update by predicate (find item by condition)
+setTodos(t => t.id === 2, "text", "Learn SolidJS deeply");
+
+// add new item (append at end)
+setTodos(todos.length, { id: 3, text: "Ship app", done: false });
+
+3) Nested arrays (board/columns/cards)
+import { createStore } from "solid-js/store";
+
+const [board, setBoard] = createStore({
+  columns: [
+    { id: "todo", cards: [{ id: 1, title: "Task A" }] },
+    { id: "doing", cards: [{ id: 2, title: "Task B" }] }
+  ]
+});
+
+// update nested field
+setBoard("columns", 0, "cards", 0, "title", "Task A (updated)");
+
+4) Heavy nested object (deep config / big JSON)
+import { createStore } from "solid-js/store";
+
+const [state, setState] = createStore({
+  user: {
+    id: 10,
+    profile: {
+      preferences: {
+        theme: "dark",
+        notifications: { email: true, sms: false }
+      }
+    }
+  },
+  org: {
+    tenants: [
+      { id: 1, config: { flags: { beta: false } } },
+      { id: 2, config: { flags: { beta: true } } }
+    ]
+  }
+});
+
+// deep object update
+setState("user", "profile", "preferences", "theme", "light");
+
+// deep update inside array-of-objects
+setState("org", "tenants", t => t.id === 1, "config", "flags", "beta", true);
+
+Gotchas:
+- Don’t destructure store fields (can lose reactivity):
+  BAD: const { user } = state;
+  GOOD: state.user.profile.preferences.theme
+- createStore is great for deep updates; if you always replace whole objects,
+  createSignal may be simpler.
+===========================================================================
+Solid createStore setter: undefined + array index special cases (summary)
+
+1) Setting a store key to undefined deletes the key
+- In Solid stores, undefined is treated as "remove this property".
+Example:
+setState({ middleName: undefined }); // deletes middleName key
+
+Gotcha:
+- You cannot reliably keep the key and store an "undefined" value in a store,
+  because the store interprets it as deletion.
+
+If you want "empty but not deleted", use one of these:
+
+A) Use null (most common)
+setState({ middleName: null }); // key stays, value is empty
+
+B) Use empty string (forms)
+setState({ middleName: "" }); // key stays
+
+C) Use a separate flag (clear intent)
+setState({ middleName: "", hasMiddleName: false });
+
+D) Use a sentinel value (distinguish missing vs intentionally blank)
+const UNSET = Symbol("UNSET");
+setState({ middleName: UNSET });
+
+Rule:
+- Avoid using undefined as a meaningful stored value in createStore.
+
+2) Array append with setStore(length, value)
+- For an array store, setStore(index, value) sets that array slot.
+- Using length targets the next free index => append.
+Example:
+setTodos(todos.length, { id: 3, text: "Ship app", done: false }); // append
+
+3) What if someone sets arr.length + 2 (skipping indexes)
+Example:
+setTodos(todos.length + 2, newTodo);
+
+Behavior:
+- Creates a sparse array (holes/empty slots) between old end and new index.
+- Array length increases to newIndex + 1.
+Example result (conceptually):
+[ item0, item1, item2, <empty>, <empty>, newTodo ]
+
+Gotchas:
+- UI loops (<For>/<Index>) may now see undefined entries and can crash if you
+  assume items exist (e.g., todo().text when todo() is undefined).
+- Can render blank rows or cause inconsistent behavior.
+- Generally avoid skipping indexes unless you intentionally want holes.
+
+Best practice:
+- Append: setTodos(todos.length, item)
+- Insert/remove/reorder: use produce + splice-like logic instead of creating holes.
+
+============================================================================================
